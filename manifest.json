@@ -1,0 +1,12 @@
+{
+  "display_name": "人物分级",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "fishingadmiral-2",
+  "version": "0.1.0",
+  "homePage": "https://github.com/fishingadmiral-2/character-tiering",
+  "auto_update": true
+}
