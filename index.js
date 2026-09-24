@@ -1,3 +1,4 @@
+import { getSortedEntries } from '../../world-info.js';
 const EXT = 'characterTiering';
 const ctx = SillyTavern.getContext();
 
@@ -8,6 +9,7 @@ const defaults = {
   profiles: [],
   manualTiers: {},
   debug: false,
+  worldBookSync: true,
 };
 
 function settings() {
@@ -106,6 +108,39 @@ function renderProfiles(){
   }
 }
 
+
+function inferWorldBookProfile(entry){
+  const keys=[...(Array.isArray(entry.key)?entry.key:[]), ...(Array.isArray(entry.keysecondary)?entry.keysecondary:[])].filter(Boolean);
+  const memo=String(entry.comment||'').trim();
+  const name=String(keys[0]||memo||'').trim();
+  if(!name || !entry.content) return null;
+  const content=String(entry.content).trim();
+  const looksCharacter = /角色|人物|性格|外貌|说话|口癖|年龄|身高|服装|character|personality|appearance/i.test(content)
+    || /角色|人物|character/i.test(memo);
+  if(!looksCharacter) return null;
+  const short = content.length>420 ? content.slice(0,420)+'…' : content;
+  const scene = content.length>1200 ? content.slice(0,1200)+'…' : content;
+  return {id:'wi:'+String(entry.uid??name),name,aliases:keys.slice(1),short,scene,full:content,source:'worldbook'};
+}
+
+async function syncWorldBook(showToast=true){
+  try{
+    const entries=await getSortedEntries();
+    const imported=entries.map(inferWorldBookProfile).filter(Boolean);
+    const manual=settings().profiles.filter(p=>p.source!=='worldbook');
+    const byName=new Map();
+    [...manual,...imported].forEach(p=>byName.set(norm(p.name),p));
+    settings().profiles=[...byName.values()];
+    ctx.saveSettingsDebounced(); renderProfiles();
+    if(showToast) toastr?.success?.(`世界书同步完成：识别 ${imported.length} 个人物条目`);
+    return imported.length;
+  }catch(e){
+    console.error('[Character Tiering] world book sync failed',e);
+    if(showToast) toastr?.error?.('世界书同步失败：'+e.message);
+    return 0;
+  }
+}
+
 function importProfiles(text){
   let data=JSON.parse(text);
   if(!Array.isArray(data)) data=[data];
@@ -148,7 +183,9 @@ function addSettings(){
   imp.addEventListener('click',()=>{try{const n=importProfiles(ta.value);toastr?.success?.(`已导入 ${n} 个人物`);}catch(e){toastr?.error?.('JSON 格式错误：'+e.message);}});
   const reset=el('button',{class:'menu_button'},'全部恢复自动');
   reset.addEventListener('click',()=>{settings().manualTiers={};save();});
-  actions.append(imp,reset); body.append(actions);
+  const sync=el('button',{class:'menu_button'},'从世界书同步');
+  sync.addEventListener('click',()=>syncWorldBook(true));
+  actions.append(imp,sync,reset); body.append(actions);
 
   const recent=el('input',{type:'number',class:'text_pole',min:'1',max:'50'}); recent.value=settings().recentMessages;
   recent.addEventListener('change',()=>{settings().recentMessages=Math.max(1,Number(recent.value)||8);ctx.saveSettingsDebounced();});
@@ -164,6 +201,7 @@ function addSettings(){
 function init(){
   settings();
   addSettings();
-  console.info('[Character Tiering] v0.1.0 loaded');
+  if(settings().worldBookSync) setTimeout(()=>syncWorldBook(false),800);
+  console.info('[Character Tiering] v0.2.0 loaded');
 }
 init();
