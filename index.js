@@ -109,20 +109,52 @@ function renderProfiles(){
 }
 
 
+function splitSections(content){
+  const lines=String(content||'').split(/\r?\n/);
+  const out=[]; let cur={title:'',body:[]};
+  const flush=()=>{ if(cur.title||cur.body.some(x=>x.trim())) out.push({title:cur.title,body:cur.body.join('\n').trim()}); };
+  for(const line of lines){
+    const m=line.match(/^\s*(?:#{1,6}\s*)?(?:\*\*)?([^：:\n]{1,30})(?:\*\*)?\s*[：:]\s*(.*)$/);
+    if(m){ flush(); cur={title:m[1].trim(),body:[m[2]].filter(Boolean)}; }
+    else cur.body.push(line);
+  }
+  flush(); return out;
+}
+function sectionScore(title, tier){
+  const t=norm(title);
+  const core=['身份','简介','基本','设定','性格','说话','语言','语气','称呼','口癖','外貌','五官','发型','年龄','身高','体型','服装','衣着','character','personality','appearance','speech','voice','outfit','clothes'];
+  const scene=['行为','习惯','喜好','关系','能力','战斗','当前','互动','姿态','behavior','habit','relationship','ability'];
+  if(core.some(k=>t.includes(k))) return 3;
+  if(tier>=2 && scene.some(k=>t.includes(k))) return 2;
+  return 0;
+}
+function semanticDigest(content,tier){
+  const sections=splitSections(content);
+  if(sections.length<2){
+    const paras=String(content).split(/\n{2,}/).map(x=>x.trim()).filter(Boolean);
+    return paras.slice(0,tier===1?2:5).join('\n\n').slice(0,tier===1?650:1800);
+  }
+  const picked=sections.filter(s=>sectionScore(s.title,tier)>= (tier===1?3:2));
+  const fallback=sections.slice(0,tier===1?3:7);
+  const use=(picked.length?picked:fallback).slice(0,tier===1?5:10);
+  return use.map(s=>s.title? `${s.title}：${s.body}` : s.body).join('\n').slice(0,tier===1?900:2400);
+}
 function inferWorldBookProfile(entry){
   const keys=[...(Array.isArray(entry.key)?entry.key:[]), ...(Array.isArray(entry.keysecondary)?entry.keysecondary:[])].filter(Boolean);
   const memo=String(entry.comment||'').trim();
   const name=String(keys[0]||memo||'').trim();
   if(!name || !entry.content) return null;
   const content=String(entry.content).trim();
-  const looksCharacter = /角色|人物|性格|外貌|说话|口癖|年龄|身高|服装|character|personality|appearance/i.test(content)
+  const looksCharacter = /角色|人物|性格|外貌|说话|口癖|年龄|身高|服装|五官|character|personality|appearance|speech/i.test(content)
     || /角色|人物|character/i.test(memo);
   if(!looksCharacter) return null;
-  const short = content.length>420 ? content.slice(0,420)+'…' : content;
-  const scene = content.length>1200 ? content.slice(0,1200)+'…' : content;
-  return {id:'wi:'+String(entry.uid??name),name,aliases:keys.slice(1),short,scene,full:content,source:'worldbook'};
+  return {
+    id:'wi:'+String(entry.uid??name), name, aliases:keys.slice(1),
+    short:semanticDigest(content,1),
+    scene:semanticDigest(content,2),
+    full:content, source:'worldbook'
+  };
 }
-
 async function syncWorldBook(showToast=true){
   try{
     const entries=await getSortedEntries();
@@ -202,6 +234,6 @@ function init(){
   settings();
   addSettings();
   if(settings().worldBookSync) setTimeout(()=>syncWorldBook(false),800);
-  console.info('[Character Tiering] v0.2.0 loaded');
+  console.info('[Character Tiering] v0.3.0 loaded');
 }
 init();
