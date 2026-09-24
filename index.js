@@ -10,6 +10,8 @@ const defaults = {
   manualTiers: {},
   debug: false,
   worldBookSync: true,
+  sceneState: {},
+  sceneWindow: 24,
 };
 
 function settings() {
@@ -28,15 +30,38 @@ function recentText(){
   return (ctx.chat||[]).slice(-n).map(m=>m?.mes ?? m?.content ?? '').join('\n');
 }
 
-function autoTier(profile){
-  const text=recentText();
-  if (!containsName(text, profile)) return 0;
-  const last=(ctx.chat||[]).slice(-2).map(m=>m?.mes ?? m?.content ?? '').join('\n');
-  if (containsName(last, profile)) return 3;
-  const presence=(profile.presence_keywords||['在场','来到','走进','身边','旁边','同行','一起']).some(k=>norm(text).includes(norm(k)));
-  return presence ? 2 : 1;
+function messageText(m){ return String(m?.mes ?? m?.content ?? ''); }
+function sceneSignals(profile){
+  const chat=(ctx.chat||[]).slice(-Math.max(6,Number(settings().sceneWindow)||24));
+  const names=namesOf(profile).map(norm).filter(Boolean);
+  let lastMention=-1, lastFocus=-1, enter=-1, leave=-1;
+  const enterWords=['进入','进来','来到','走来','出现','加入','回到','坐到','站在','跟上','同行','靠近','身边','旁边','enter','arrive','join','approach'];
+  const leaveWords=['离开','走出','出去','告别','退场','返回自己的','消失','远去','离去','leave','exit','depart','walk away'];
+  chat.forEach((m,i)=>{
+    const t=norm(messageText(m));
+    if(!names.some(n=>t.includes(n))) return;
+    lastMention=i;
+    if(enterWords.some(k=>t.includes(norm(k)))) enter=i;
+    if(leaveWords.some(k=>t.includes(norm(k)))) leave=i;
+    if(i>=chat.length-2) lastFocus=i;
+  });
+  return {lastMention,lastFocus,enter,leave,count:chat.length};
 }
-
+function autoTier(profile){
+  const sig=sceneSignals(profile);
+  const key=profile.id||profile.name;
+  const state=settings().sceneState[key] || {present:false,lastSeen:-1};
+  if(sig.leave>=0 && sig.leave>=sig.enter){ state.present=false; state.lastSeen=sig.leave; }
+  else if(sig.enter>=0){ state.present=true; state.lastSeen=sig.enter; }
+  else if(sig.lastMention>=0 && sig.lastMention>=sig.count-6){ state.present=true; state.lastSeen=sig.lastMention; }
+  if(sig.lastFocus>=0) state.lastSeen=sig.lastFocus;
+  if(sig.lastMention<0 && state.lastSeen>=0 && (sig.count-state.lastSeen)>16) state.present=false;
+  settings().sceneState[key]=state;
+  if(sig.lastFocus>=0) return 3;
+  if(state.present) return 2;
+  if(sig.lastMention>=0) return 1;
+  return 0;
+}
 function tierFor(p){
   const manual=settings().manualTiers?.[p.id||p.name];
   return Number.isInteger(manual) ? manual : autoTier(p);
@@ -187,6 +212,7 @@ function importProfiles(text){
   }));
   settings().profiles=cleaned;
   settings().manualTiers={};
+  settings().sceneState={};
   ctx.saveSettingsDebounced(); renderProfiles();
   return cleaned.length;
 }
@@ -213,11 +239,13 @@ function addSettings(){
   const actions=el('div',{class:'ct-actions'});
   const imp=el('button',{class:'menu_button'},'导入 / 覆盖人物');
   imp.addEventListener('click',()=>{try{const n=importProfiles(ta.value);toastr?.success?.(`已导入 ${n} 个人物`);}catch(e){toastr?.error?.('JSON 格式错误：'+e.message);}});
+  const clearScene=el('button',{class:'menu_button'},'清空现场状态');
+  clearScene.addEventListener('click',()=>{settings().sceneState={};ctx.saveSettingsDebounced();renderProfiles();toastr?.success?.('现场人物状态已清空');});
   const reset=el('button',{class:'menu_button'},'全部恢复自动');
   reset.addEventListener('click',()=>{settings().manualTiers={};save();});
   const sync=el('button',{class:'menu_button'},'从世界书同步');
   sync.addEventListener('click',()=>syncWorldBook(true));
-  actions.append(imp,sync,reset); body.append(actions);
+  actions.append(imp,sync,clearScene,reset); body.append(actions);
 
   const recent=el('input',{type:'number',class:'text_pole',min:'1',max:'50'}); recent.value=settings().recentMessages;
   recent.addEventListener('change',()=>{settings().recentMessages=Math.max(1,Number(recent.value)||8);ctx.saveSettingsDebounced();});
@@ -234,6 +262,6 @@ function init(){
   settings();
   addSettings();
   if(settings().worldBookSync) setTimeout(()=>syncWorldBook(false),800);
-  console.info('[Character Tiering] v0.3.0 loaded');
+  console.info('[Character Tiering] v0.4.0 loaded');
 }
 init();
